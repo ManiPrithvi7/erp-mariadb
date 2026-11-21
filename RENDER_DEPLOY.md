@@ -15,9 +15,10 @@ Dashboard → New → **Blueprint** → connect `ManiPrithvi7/erp-mariadb`. Two 
 | `MARIADB_ROOT_PASSWORD` | used only while the datadir is empty; nothing needs it afterwards, and the reconciler deliberately does not depend on it |
 
 `MARIADB_DATABASE=erpnext` and `MARIADB_USER=erpnext` are plain values in the file — and, since
-the `'<none>'` deploy below, `ENV` defaults in the Dockerfile too, so the only things that can
-genuinely only come from the dashboard are the two secrets. If you create the service by hand
-instead of from the Blueprint, set **all four** anyway, and read §4 first.
+the `'<none>'` deploy below, `ENV` defaults in the Dockerfile too, so the two secrets above are the
+whole dashboard input. The fresh-datadir gate in `docker/entrypoint.sh` names *every* variable that
+is still missing in one deploy, so you cannot spend one restart per variable. If you create the
+service by hand instead of from the Blueprint, set **all four** anyway, and read §4 first.
 
 ## 2. Why the database has to own port 10000 (X9)
 
@@ -107,12 +108,19 @@ Version: '10.6.28-MariaDB-ubu2204'  socket: '/run/mysqld/mysqld.sock'  port: 100
   printed "ready for connections", and Render called it live. The app's first request would be
   `Unknown database 'erpnext'` — for the life of that disk, because the image only reads those
   variables while the datadir is empty. `docker/entrypoint.sh` now refuses to start a fresh
-  datadir without all three, and the very next deploy of this repo proved the trade:
+  datadir without the credentials it cannot bake in, and the very next deploy of this repo proved
+  the trade:
 
   ```
   [db-entrypoint] server args from the command: mariadbd --console
   [db-entrypoint] FATAL: fresh datadir but the environment has no MARIADB_DATABASE MARIADB_USER MARIADB_PASSWORD.
   ==> Exited with status 1
+  ```
+
+  and, one deploy later, after the two non-secret names moved into the image:
+
+  ```
+  [db-entrypoint] FATAL: fresh datadir but the environment has no MARIADB_PASSWORD.
   ```
 
   A failed deploy that names the missing variables beats a green deploy that hides an unusable

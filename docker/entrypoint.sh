@@ -37,19 +37,21 @@ if [[ ! -d "$DATADIR/mysql" ]]; then
   # and never again. Init without them and everything still looks fine - "ready for connections",
   # Render says live - while the app gets "Unknown database 'erpnext'" for the life of the disk.
   # The first Render deploy of this repo did exactly that, so refuse rather than start it.
-  # The Dockerfile now supplies the two non-secret names, which leaves only the passwords that
-  # genuinely cannot be baked in. (MARIADB_ROOT_PASSWORD is left to the image, which already
-  # aborts without it.)
+  # The Dockerfile now supplies the two non-secret names, which leaves the two passwords. Root
+  # stays in the list although nothing authenticates as root afterwards: initdb cannot run without
+  # it either, and naming every gap in one boot beats finding them one deploy at a time. Upstream
+  # would also accept MARIADB_RANDOM_ROOT_PASSWORD; a credential printed into a Render log line is
+  # not what this runbook wants, so it is required explicitly.
   missing=()
-  for v in MARIADB_DATABASE MARIADB_USER MARIADB_PASSWORD; do
+  for v in MARIADB_DATABASE MARIADB_USER MARIADB_PASSWORD MARIADB_ROOT_PASSWORD; do
     [[ -n "${!v:-}" ]] || missing+=("$v")
   done
   if (( ${#missing[@]} )); then
     log "FATAL: fresh datadir but the environment has no ${missing[*]}."
     log "       The database, user and schema are created from env on THIS boot only, and a"
     log "       datadir initialized without them cannot be given them later by the image."
-    log "       On Render: dashboard -> this service -> Environment, scope Global (render.yaml"
-    log "       sets all three). This disk is still empty, so setting them and redeploying loses"
+    log "       On Render: dashboard -> this service -> Environment, scope Global (the Blueprint"
+    log "       sets all four). This disk is still empty, so setting them and redeploying loses"
     log "       nothing - which stops being true after the first successful boot."
     exit 1
   fi
