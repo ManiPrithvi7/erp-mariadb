@@ -37,7 +37,9 @@ if [[ ! -d "$DATADIR/mysql" ]]; then
   # and never again. Init without them and everything still looks fine - "ready for connections",
   # Render says live - while the app gets "Unknown database 'erpnext'" for the life of the disk.
   # The first Render deploy of this repo did exactly that, so refuse rather than start it.
-  # (MARIADB_ROOT_PASSWORD is left to the image, which already aborts without it.)
+  # The Dockerfile now supplies the two non-secret names, which leaves only the passwords that
+  # genuinely cannot be baked in. (MARIADB_ROOT_PASSWORD is left to the image, which already
+  # aborts without it.)
   missing=()
   for v in MARIADB_DATABASE MARIADB_USER MARIADB_PASSWORD; do
     [[ -n "${!v:-}" ]] || missing+=("$v")
@@ -45,8 +47,10 @@ if [[ ! -d "$DATADIR/mysql" ]]; then
   if (( ${#missing[@]} )); then
     log "FATAL: fresh datadir but the environment has no ${missing[*]}."
     log "       The database, user and schema are created from env on THIS boot only, and a"
-    log "       datadir initialized without them cannot be given them later by the image. Set"
-    log "       them on the service (render.yaml sets all three) and redeploy onto an empty disk."
+    log "       datadir initialized without them cannot be given them later by the image."
+    log "       On Render: dashboard -> this service -> Environment, scope Global (render.yaml"
+    log "       sets all three). This disk is still empty, so setting them and redeploying loses"
+    log "       nothing - which stops being true after the first successful boot."
     exit 1
   fi
   log "fresh datadir at $DATADIR - the image creates user '${MARIADB_USER}' and database '${MARIADB_DATABASE}' from env; nothing to reconcile"

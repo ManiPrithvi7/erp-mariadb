@@ -1,8 +1,8 @@
 # proof-erpnext-db
 
-MariaDB 10.6 as a Render **private service**, with one file added to the official image: an
-entrypoint that keeps the application password in sync with the environment on every boot
-instead of only on the first one.
+MariaDB 10.6 as a Render **private service**, with two things added to the official image: a config
+file that carries the settings a dashboard service can forget, and an entrypoint that keeps the
+application password in sync with the environment on every boot instead of only on the first one.
 
 Second of the three sibling repos to deploy — after
 [`proof-erpnext-redis`](../proof-erpnext-redis), before
@@ -37,7 +37,8 @@ The obvious implementation — start the server, connect over the unix socket as
 So `docker/entrypoint.sh` generates an idempotent SQL script from the env and passes it as
 **`mariadbd --init-file=…`**, which MariaDB executes as superuser without authentication, during
 startup, before it accepts a connection. Two properties of `--init-file` were measured before
-committing to it (both reproducible; see `RENDER_DEPLOY.md` §4):
+committing to it (the reasoning is in the comment block above `stage_reconcile_sql` in
+`docker/entrypoint.sh`):
 
 | probe | result | consequence |
 |---|---|---|
@@ -65,13 +66,14 @@ still recognises the datadir.
 
 | path | what it is |
 |---|---|
-| `Dockerfile` | `FROM mariadb:10.6` + the entrypoint + `MARIADB_DATA_DIR` |
-| `docker/entrypoint.sh` | fresh-vs-existing datadir branch, `--init-file` reconcile, SIGTERM forwarding, post-boot verification |
-| `docker-compose.yml` | same image, same server flags, port 10000, named volume |
-| `render.yaml` | `pserv`, `1c-2g`, 10 GB disk at `/var/lib/mysql`, `dockerCommand` with the utf8mb4/buffer-pool flags |
+| `Dockerfile` | `FROM mariadb:10.6` + the entrypoint + `render.cnf` + `MARIADB_DATA_DIR` and the `erpnext` database/user names as `ENV` defaults |
+| `docker/render.cnf` | port 10000, utf8mb4/`unicode_ci`, client-handshake skip, compressed-row flag — settings that cannot be left to a dashboard field |
+| `docker/entrypoint.sh` | fresh-vs-existing datadir branch (and the refusal to init a blank database), `--init-file` reconcile, SIGTERM forwarding, post-boot verification |
+| `docker-compose.yml` | same image, same port, named volume; only the buffer pool on the command line, and a `/dev/tcp` healthcheck instead of `mariadb-admin ping` |
+| `render.yaml` | `pserv`, `1c-2g`, 10 GB disk at `/var/lib/mysql`, `dockerCommand` holding only `--innodb-buffer-pool-size` |
 | `scripts/rotate-test.sh` | X11 |
 | `scripts/backup.sh` / `scripts/restore.sh` | the only real backup story, since Render's snapshots die with the service |
-| `RENDER_DEPLOY.md` | deploy order, port 10000, disk rules, the two probes above, swap-to-managed-MariaDB |
+| `RENDER_DEPLOY.md` | deploy order, where each setting lives, private-vs-web service, TCP-only connection checks, disk rules, the two probes above, swap-to-managed-MariaDB |
 
 ## Read next
 

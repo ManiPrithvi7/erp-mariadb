@@ -14,9 +14,10 @@ Dashboard → New → **Blueprint** → connect `ManiPrithvi7/erp-mariadb`. Two 
 | `MARIADB_PASSWORD` | what the app connects as. Changeable later — see §6 |
 | `MARIADB_ROOT_PASSWORD` | used only while the datadir is empty; nothing needs it afterwards, and the reconciler deliberately does not depend on it |
 
-`MARIADB_DATABASE=erpnext` and `MARIADB_USER=erpnext` are plain values in the file. If you create
-the service by hand instead of from the Blueprint, **set all four** — see §4 for what happens when
-you do not.
+`MARIADB_DATABASE=erpnext` and `MARIADB_USER=erpnext` are plain values in the file — and, since
+the `'<none>'` deploy below, `ENV` defaults in the Dockerfile too, so the only things that can
+genuinely only come from the dashboard are the two secrets. If you create the service by hand
+instead of from the Blueprint, set **all four** anyway, and read §4 first.
 
 ## 2. Why the database has to own port 10000 (X9)
 
@@ -83,9 +84,11 @@ file and redeployed, not overridden from the env.
 
 ## 4. Private service — never a web service (X9, measured)
 
-This repo's first Render deploy was created from the dashboard rather than the Blueprint, so it
-came out as a **web** service with only `MARIADB_ROOT_PASSWORD` and `REDIS_URL`-style hand-typed
-variables. Both problems are visible in its own log, and neither produced a failed deploy:
+This repo's first Render deploy was created from the dashboard rather than the Blueprint — so a
+**web** service, and with almost none of the variables `render.yaml` would have set. Both problems
+are visible in its own log, and neither produced a failed deploy. (`MARIADB_ROOT_PASSWORD` is the
+one that must have been present: the image only reaches `Initializing database files` when it has a
+root password to initialize with.)
 
 ```
 ==> Setting WEB_CONCURRENCY=1 by default, based on available CPUs in the instance
@@ -104,22 +107,37 @@ Version: '10.6.28-MariaDB-ubu2204'  socket: '/run/mysqld/mysqld.sock'  port: 100
   printed "ready for connections", and Render called it live. The app's first request would be
   `Unknown database 'erpnext'` — for the life of that disk, because the image only reads those
   variables while the datadir is empty. `docker/entrypoint.sh` now refuses to start a fresh
-  datadir without all three (`FATAL: fresh datadir but the environment has no …`) instead of
-  producing this. Rotating `MARIADB_PASSWORD` later is still safe; it is only the *first* boot
-  that is unrepeatable.
+  datadir without all three, and the very next deploy of this repo proved the trade:
+
+  ```
+  [db-entrypoint] server args from the command: mariadbd --console
+  [db-entrypoint] FATAL: fresh datadir but the environment has no MARIADB_DATABASE MARIADB_USER MARIADB_PASSWORD.
+  ==> Exited with status 1
+  ```
+
+  A failed deploy that names the missing variables beats a green deploy that hides an unusable
+  database. That log says two more things about the service: `mariadbd --console` is the image's
+  built-in `CMD`, so no `dockerCommand` reached it, and all three variables are absent — i.e. it
+  is a hand-created service, not this `render.yaml`. Rotating `MARIADB_PASSWORD` later is still
+  safe; it is only the *first* boot that is unrepeatable.
 - **Once a second, forever, from `127.0.0.1`:** that is Render's in-instance HTTP port scanner
   (the same thing that spam-attacked Redis — see
   [proof-erpnext-redis/RENDER_DEPLOY.md](../proof-erpnext-redis/RENDER_DEPLOY.md)). It opens the
   socket, sends nothing MariaDB can parse as a handshake, and closes. Each probe is one
-  `Aborted connection … user: 'unauthenticated'` warning. `10.213.27.85` in the same log is the
-  platform's TCP health probe from inside the instance network — that one is expected and correct
-  on a private service, at ~5 s intervals and in pairs (IPv4 + IPv6).
+  `Aborted connection … user: 'unauthenticated'` warning. The `10.213.27.85` lines are not
+  localhost, so they are not the scanner: they arrive in pairs every ~5 s, which is a platform
+  probe from inside the instance network — the shape of check a `pserv` does permanently, and the
+  one that has to keep working.
 - A `web` service also gets a public URL for a database. `erp-mariadb.onrender.com` answers
   nothing useful, but it is a real hostname on the internet pointing at 10000.
 
 So: create a **Private Service**, name it `erpnext-db` (the service name, not the repo name), give
-it the disk at creation time, and set all four `MARIADB_*` variables. Render will not change a
-service's type afterwards — the only way out is to delete the service, which deletes its disk.
+it the disk at creation time, and set all four `MARIADB_*` variables. The cheapest way to get every
+one of those right at once is **New → Blueprint** on this repo — that is precisely what
+`render.yaml` encodes (pserv, plan, disk, four variables, buffer pool) — and its `repo:` now points
+at the real remote, so it works. If you keep a hand-created service instead, you are re-typing each
+of those fields by hand, and Render will not change a service's type afterwards — the only way out
+of a `web` service is to delete it, which deletes its disk.
 
 ### Connection checks are TCP-only, never `ping`
 
@@ -159,7 +177,7 @@ SIGTERM and then waits; `docker/entrypoint.sh` forwards that signal to `mariadbd
 script `exec`s it, so the pid we track really is the server), which is what turns a planned
 restart into a clean InnoDB shutdown instead of a crash-recovery boot.
 
-## 5. Rotating the application password
+## 6. Rotating the application password
 
 This is the flow the reconciling entrypoint exists to make safe:
 
@@ -187,7 +205,7 @@ working.
 Root is deliberately left out of the reconcile. Rotating `MARIADB_ROOT_PASSWORD` in the dashboard
 changes nothing in a surviving datadir, and nothing in this stack needs root.
 
-## 6. Copy the internal hostname, then verify
+## 7. Copy the internal hostname, then verify
 
 `erpnext-db-<4char>` on port `10000` goes into `proof-erpnext-app` as `DB_HOST`. From the app
 service's **Shell** tab (`pymysql` is in the Frappe venv):
@@ -201,7 +219,7 @@ cur = c.cursor(); cur.execute("SELECT VERSION(), @@innodb_buffer_pool_size, @@ch
 print(cur.fetchone())
 ```
 
-## 7. Backups — the honest version
+## 8. Backups — the honest version
 
 Render gives you daily disk snapshots that you cannot download and that vanish with the service,
 so durability rests on dumps you pull yourself:
@@ -223,7 +241,7 @@ A database-only restore into a fresh site therefore cannot decrypt the API keys 
 unless `FRAPPE_ENCRYPTION_KEY` was pinned as a secret in `erpnext-app`. Pin it from the first
 deploy; see [proof-erpnext-app/RENDER_DEPLOY.md](../proof-erpnext-app/RENDER_DEPLOY.md).
 
-## 8. Swapping to a managed MariaDB
+## 9. Swapping to a managed MariaDB
 
 Render has no managed MariaDB and Frappe v16 has no PostgreSQL support, which is exactly why this
 repo exists as a container. The swap is a `render.yaml` deletion, not a redesign: the app only
@@ -232,7 +250,7 @@ consumes `DB_HOST`, `DB_PORT`, `DB_NAME`, `DB_USER`, `DB_PASSWORD` (plus the sam
 (`rediss`-equivalent for MySQL — set `ssl_mode` in the site config), and the reconciling entrypoint
 becomes someone else's problem, i.e. you are back to running `ALTER USER` by hand after a rotation.
 
-## 9. Version changes
+## 10. Version changes
 
 `FROM mariadb:10.6` is a moving minor-version target. A `docker compose build --pull` (or a Render
 rebuild) can hand the same datadir to a newer 10.6.x, and upstream's entrypoint runs

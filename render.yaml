@@ -44,6 +44,10 @@ services:
       mountPath: /var/lib/mysql
       sizeGB: 10
     envVars:
+      # The Dockerfile now defaults these same two values, because the image only reads them on the
+      # first boot and a hand-created service that omits them produces an empty database that
+      # reports "live" (X9). They stay explicit here anyway: the Blueprint is the deployment
+      # mechanism, the image default is the net under it.
       - key: MARIADB_DATABASE
         value: erpnext
       - key: MARIADB_USER
