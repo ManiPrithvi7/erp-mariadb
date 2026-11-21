@@ -14,7 +14,7 @@
 services:
   - type: pserv
     name: erpnext-db
-    repo: https://github.com/ManiPrithvi7/erpnext-db
+    repo: https://github.com/ManiPrithvi7/erp-mariadb
     branch: main
     runtime: docker
     dockerfilePath: ./Dockerfile

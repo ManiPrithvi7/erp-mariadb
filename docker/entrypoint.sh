@@ -25,6 +25,19 @@ if [[ "${1:-}" == -* || -z "${1:-}" ]]; then
   set -- mariadbd "$@"
 fi
 
+# Every service in this stack listens on Render's primary port, and the app reaches this one via
+# DB_PORT=10000. The `--port=10000` that normally says so lives in render.yaml's dockerCommand,
+# which a service hand-created in the dashboard never inherits - and a server on 3306 behind a
+# green deploy is the quietest possible failure (X9, measured on the first Render deploy of the
+# sibling redis service). Default the port here so it takes a deliberate --port to change it.
+for arg in "$@"; do
+  [[ "$arg" == --port=* ]] && port_given=1
+done
+if [[ -z "${port_given:-}" ]]; then
+  set -- "$@" --port=10000
+  log "no --port in the command - mariadbd will listen on 10000, the port the app dials"
+fi
+
 if [[ ! -d "$DATADIR/mysql" ]]; then
   log "fresh datadir at $DATADIR - the image creates '${MARIADB_USER:-<none>}' from env; nothing to reconcile"
   exec "$UPSTREAM" "$@"
