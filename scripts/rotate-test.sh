@@ -40,11 +40,19 @@ conn "$NEW" && ok "new secret authenticates (ALTER USER ran against the survivin
 if conn "$OLD"; then bad "the OLD secret still works, so the reconcile did not happen"; else ok "old secret is gone"; fi
 
 echo "== 4. restart again with no env change: must stay healthy and skip the churn"
+# Counting the line across the whole log instead of grepping a `--since 1m` window: a restart keeps
+# the same container, so the previous boot's lines are still in there, and a time window can match
+# either one. Only "did it appear again" is a real assertion.
+boots_before="$(docker compose logs --no-log-prefix db 2>/dev/null | grep -c 'existing datadir')"
 docker compose restart db >/dev/null 2>&1
 sleep 6
 conn "$NEW" && ok "second plain restart still authenticates" || bad "broke on a no-op restart"
-docker compose logs --no-log-prefix --since 1m db 2>/dev/null | grep -q 'existing datadir' \
-  && ok "entrypoint recognised the existing datadir" || bad "entrypoint thought this was a fresh disk (X10 equivalent)"
+boots_after="$(docker compose logs --no-log-prefix db 2>/dev/null | grep -c 'existing datadir')"
+if [ "${boots_after:-0}" -gt "${boots_before:-0}" ]; then
+  ok "entrypoint recognised the existing datadir again ($boots_before -> $boots_after boots)"
+else
+  bad "no 'existing datadir' line from this restart (count stayed at $boots_after) - either a fresh-disk reinstall or the line moved"
+fi
 
 if [[ -f .env.bak ]]; then mv .env.bak .env; echo; echo "(.env restored to DB_PASSWORD=$OLD; on Render you would simply leave the new value)"; fi
 printf '\n== %s passed, %s failed\n' "$PASS" "$FAIL"

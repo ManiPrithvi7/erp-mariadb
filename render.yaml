@@ -4,8 +4,10 @@
 # resolves inside a single Blueprint, so the app pastes this service's internal hostname by
 # hand - see RENDER_DEPLOY.md.
 #
-# A private service has no `ports:` field in the spec and only a TCP health check, so MariaDB
-# must own the primary port: --port=10000 in dockerCommand (X9).
+# A private service has no `ports:` field in the spec and gets a TCP-only health check, so MariaDB
+# must own the primary port - /etc/mysql/conf.d/render.cnf sets port=10000 (X9). Nothing may probe
+# this port with HTTP: a web service gets Render's in-instance HTTP scan, which MariaDB logs as an
+# "Aborted connection ... closed normally without authentication" once a second, forever.
 #
 # The disk must exist on the FIRST deploy. Adding it later mounts an empty volume over
 # /var/lib/mysql, which is indistinguishable from an empty database - and then the reconciling
@@ -27,16 +29,16 @@ services:
     autoDeployTrigger: off
     # Every flag here is a mariadbd argument; dockerCommand replaces the image CMD and our
     # ENTRYPOINT prepends `mariadbd` when the first token starts with `-`.
+    #
+    # That is all that is left here. Port 10000, utf8mb4/unicode_ci, the client-handshake skip and
+    # skip-innodb-read-only-compressed now travel in the image at /etc/mysql/conf.d/render.cnf,
+    # because a service hand-created in the dashboard inherits no dockerCommand and came up without
+    # all four (X9). A command-line flag still outranks the file. The buffer pool stays a
+    # dockerCommand decision because it has to match the plan.
     # No ${...} here on purpose: Blueprint values are literal (only {fromEnv}/{fromService}/
     # {fromDatabase} interpolate), so the buffer pool is edited in this file, not in the env.
     # X8 is the experiment that finds the number this should hold on a 2 GB instance.
-    dockerCommand: >-
-      --port=10000
-      --character-set-server=utf8mb4
-      --collation-server=utf8mb4_unicode_ci
-      --skip-character-set-client-handshake
-      --skip-innodb-read-only-compressed
-      --innodb-buffer-pool-size=768M
+    dockerCommand: --innodb-buffer-pool-size=768M
     disk:
       name: erpnext-db-data
       mountPath: /var/lib/mysql

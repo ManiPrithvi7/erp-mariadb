@@ -25,21 +25,31 @@ if [[ "${1:-}" == -* || -z "${1:-}" ]]; then
   set -- mariadbd "$@"
 fi
 
-# Every service in this stack listens on Render's primary port, and the app reaches this one via
-# DB_PORT=10000. The `--port=10000` that normally says so lives in render.yaml's dockerCommand,
-# which a service hand-created in the dashboard never inherits - and a server on 3306 behind a
-# green deploy is the quietest possible failure (X9, measured on the first Render deploy of the
-# sibling redis service). Default the port here so it takes a deliberate --port to change it.
-for arg in "$@"; do
-  [[ "$arg" == --port=* ]] && port_given=1
-done
-if [[ -z "${port_given:-}" ]]; then
-  set -- "$@" --port=10000
-  log "no --port in the command - mariadbd will listen on 10000, the port the app dials"
-fi
+# What arrived on the command line, printed because that is the part a hand-created dashboard
+# service silently loses. The port, the character set and the compressed-row flag are in
+# /etc/mysql/conf.d/render.cnf instead, which travels inside the image, so plain
+# `mariadbd --console` is a correct server rather than a misconfigured one (X9).
+log "server args from the command: $*"
 
 if [[ ! -d "$DATADIR/mysql" ]]; then
-  log "fresh datadir at $DATADIR - the image creates '${MARIADB_USER:-<none>}' from env; nothing to reconcile"
+  # This boot is the only chance to create the account Frappe logs in as and the schema it opens:
+  # the image reads MARIADB_USER / MARIADB_PASSWORD / MARIADB_DATABASE while the datadir is empty
+  # and never again. Init without them and everything still looks fine - "ready for connections",
+  # Render says live - while the app gets "Unknown database 'erpnext'" for the life of the disk.
+  # The first Render deploy of this repo did exactly that, so refuse rather than start it.
+  # (MARIADB_ROOT_PASSWORD is left to the image, which already aborts without it.)
+  missing=()
+  for v in MARIADB_DATABASE MARIADB_USER MARIADB_PASSWORD; do
+    [[ -n "${!v:-}" ]] || missing+=("$v")
+  done
+  if (( ${#missing[@]} )); then
+    log "FATAL: fresh datadir but the environment has no ${missing[*]}."
+    log "       The database, user and schema are created from env on THIS boot only, and a"
+    log "       datadir initialized without them cannot be given them later by the image. Set"
+    log "       them on the service (render.yaml sets all three) and redeploy onto an empty disk."
+    exit 1
+  fi
+  log "fresh datadir at $DATADIR - the image creates user '${MARIADB_USER}' and database '${MARIADB_DATABASE}' from env; nothing to reconcile"
   exec "$UPSTREAM" "$@"
 fi
 

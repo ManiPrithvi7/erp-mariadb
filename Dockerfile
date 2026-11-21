@@ -10,6 +10,13 @@ FROM mariadb:10.6
 COPY docker/entrypoint.sh /opt/render/entrypoint.sh
 RUN chmod 0755 /opt/render/entrypoint.sh
 
+# The settings ERPNext cannot run without - port 10000, utf8mb4/unicode_ci, and
+# skip-innodb-read-only-compressed. /etc/mysql/my.cnf !includedirs conf.d *last*, so this file
+# outranks Debian's own defaults, and a command-line flag still outranks this file. It is in the
+# image rather than in render.yaml's dockerCommand because a service hand-created in the
+# dashboard inherits no dockerCommand at all (X9, measured on the first Render deploy).
+COPY docker/render.cnf /etc/mysql/conf.d/render.cnf
+
 # The datadir. Render mounts a disk here; everything outside it is gone on every deploy.
 ENV MARIADB_DATA_DIR=/var/lib/mysql
 

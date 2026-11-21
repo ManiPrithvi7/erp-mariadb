@@ -13,12 +13,10 @@ services:
       # Published only for local mysql clients; Render reaches this service on the private
       # network at erpnext-db-<hash>:10000 and never publishes a port.
       - "${DB_LOCAL_PORT:-13306}:10000"
+    # Only the plan-dependent tuning. The port, utf8mb4/unicode_ci, the client-handshake skip and
+    # skip-innodb-read-only-compressed are baked into the image at
+    # /etc/mysql/conf.d/render.cnf, so they are correct here for the same reason they are on Render.
     command:
-      - --port=10000
-      - --character-set-server=utf8mb4
-      - --collation-server=utf8mb4_unicode_ci
-      - --skip-character-set-client-handshake
-      - --skip-innodb-read-only-compressed
       - --innodb-buffer-pool-size=${INNODB_BUFFER_POOL:-768M}
     environment:
       MARIADB_ROOT_PASSWORD: ${MARIADB_ROOT_PASSWORD:-proof-root-password}
@@ -28,8 +26,11 @@ services:
     volumes:
       - db-data:/var/lib/mysql
     healthcheck:
-      # Same question Render asks with its TCP-only pserv probe (X9): is 10000 answering?
-      test: ["CMD", "mariadb-admin", "-h", "127.0.0.1", "-P", "10000", "-uroot", "-p${MARIADB_ROOT_PASSWORD:-proof-root-password}", "ping"]
+      # A bare TCP connect to 10000 - exactly the question Render's pserv probe asks (X9), and the
+      # only shape of check that needs no credential. The obvious `mariadb-admin ping` authenticates
+      # (so it fails for reasons that have nothing to do with reachability) and puts the root
+      # password in `docker inspect`. Render cannot do either, so neither do we.
+      test: ["CMD-SHELL", "timeout 3 bash -c 'exec 3<>/dev/tcp/127.0.0.1/10000'"]
       interval: 10s
       timeout: 5s
       retries: 20

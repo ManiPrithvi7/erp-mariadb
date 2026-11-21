@@ -1,0 +1,33 @@
+# MariaDB has to be right about these settings before ERPNext writes a single row, and the obvious
+# place to set them - render.yaml's `dockerCommand` / the dashboard's Command field - is the one
+# place a hand-created service forgets. The first Render deploy of this repo proved it: the
+# service came up with none of them and still went green.
+#
+# A config file travels inside the image, so it cannot be lost. Anything on the command line
+# still wins, which keeps dockerCommand usable for per-plan tuning.
+[mysqld]
+
+# Every service in this stack listens on Render's primary port, and the app dials DB_PORT=10000.
+# 3306 here would be an unreachable database behind a healthy deploy (X9).
+port = 10000
+
+# Frappe creates its tables as utf8mb4 / utf8mb4_unicode_ci and stores emoji, CJK and accented
+# names in them. On the wrong collation the installer fails partway with "Invalid utf8mb4
+# character string" rather than up front.
+character-set-server = utf8mb4
+collation-server = utf8mb4_unicode_ci
+
+# Force the server's choice even when a client asks for something else, so a connection that
+# forgot to say SET NAMES utf8mb4 cannot silently store mojibake.
+skip-character-set-client-handshake
+
+# ERPNext marks several core tables ROW_FORMAT=COMPRESSED, and this variable is what makes
+# ALTERing one of them a hard error. Measured on the image we actually build (10.6.25) and on
+# 11.4.13: the compiled default is already FALSE and nothing in /etc/mysql sets it, so this line
+# changes nothing today. It stays because it is in frappe_docker's own mariadb config, and
+# because a future image bump that turns the default ON would break `bench migrate` in a way
+# nobody here would predict. A no-op you can point at beats a surprise you cannot.
+skip-innodb-read-only-compressed
+
+# Deliberately NOT here: innodb_buffer_pool_size. It has to match the instance plan (768M on
+# 1c-2g, and OOM-unsafe on a 512 MB starter), so it stays a dockerCommand/env decision. See X8.
