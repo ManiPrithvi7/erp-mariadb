@@ -1,0 +1,38 @@
+# Local run of the exact image Render builds. The app repo's docker-compose.yml starts this
+# same build as part of the parity stack.
+#
+#   docker compose up -d
+#   ./scripts/rotate-test.sh          # X11 on its own, no app involved
+services:
+  db:
+    build:
+      context: .
+    image: proof-erpnext-db:local
+    restart: unless-stopped
+    ports:
+      # Published only for local mysql clients; Render reaches this service on the private
+      # network at erpnext-db-<hash>:10000 and never publishes a port.
+      - "${DB_LOCAL_PORT:-13306}:10000"
+    command:
+      - --port=10000
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_unicode_ci
+      - --skip-character-set-client-handshake
+      - --skip-innodb-read-only-compressed
+      - --innodb-buffer-pool-size=${INNODB_BUFFER_POOL:-768M}
+    environment:
+      MARIADB_ROOT_PASSWORD: ${MARIADB_ROOT_PASSWORD:-proof-root-password}
+      MARIADB_DATABASE: ${DB_NAME:-erpnext}
+      MARIADB_USER: ${DB_USER:-erpnext}
+      MARIADB_PASSWORD: ${DB_PASSWORD:-proof-db-password}
+    volumes:
+      - db-data:/var/lib/mysql
+    healthcheck:
+      # Same question Render asks with its TCP-only pserv probe (X9): is 10000 answering?
+      test: ["CMD", "mariadb-admin", "-h", "127.0.0.1", "-P", "10000", "-uroot", "-p${MARIADB_ROOT_PASSWORD:-proof-root-password}", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+
+volumes:
+  db-data:

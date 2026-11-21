@@ -1,0 +1,55 @@
+# Blueprint spec: https://render.com/docs/blueprint-spec
+#
+# This is ONE of three Blueprints (redis, db, app), each in its own repo. `fromService` only
+# resolves inside a single Blueprint, so the app pastes this service's internal hostname by
+# hand - see RENDER_DEPLOY.md.
+#
+# A private service has no `ports:` field in the spec and only a TCP health check, so MariaDB
+# must own the primary port: --port=10000 in dockerCommand (X9).
+#
+# The disk must exist on the FIRST deploy. Adding it later mounts an empty volume over
+# /var/lib/mysql, which is indistinguishable from an empty database - and then the reconciling
+# entrypoint helpfully re-creates the schema from env. That is the worst possible outcome, so
+# never attach a disk to an existing service.
+services:
+  - type: pserv
+    name: erpnext-db
+    repo: https://github.com/ManiPrithvi7/erpnext-db
+    branch: main
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    plan: 1c-2g
+    # One instance only: a second one gets its own empty disk. This is not replication.
+    numInstances: 1
+    # InnoDB needs the time to flush on a stop; Render's default would SIGKILL it and turn a
+    # planned restart into a crash-recovery boot.
+    maxShutdownDelaySeconds: 300
+    autoDeployTrigger: off
+    # Every flag here is a mariadbd argument; dockerCommand replaces the image CMD and our
+    # ENTRYPOINT prepends `mariadbd` when the first token starts with `-`.
+    # No ${...} here on purpose: Blueprint values are literal (only {fromEnv}/{fromService}/
+    # {fromDatabase} interpolate), so the buffer pool is edited in this file, not in the env.
+    # X8 is the experiment that finds the number this should hold on a 2 GB instance.
+    dockerCommand: >-
+      --port=10000
+      --character-set-server=utf8mb4
+      --collation-server=utf8mb4_unicode_ci
+      --skip-character-set-client-handshake
+      --skip-innodb-read-only-compressed
+      --innodb-buffer-pool-size=768M
+    disk:
+      name: erpnext-db-data
+      mountPath: /var/lib/mysql
+      sizeGB: 10
+    envVars:
+      - key: MARIADB_DATABASE
+        value: erpnext
+      - key: MARIADB_USER
+        value: erpnext
+      # Changing MARIADB_PASSWORD here is safe from the second boot onwards, because
+      # docker/entrypoint.sh runs ALTER USER against the surviving datadir (X11). It is NOT
+      # safe to change it and only restart the app: the database must restart first.
+      - key: MARIADB_PASSWORD
+        sync: false
+      - key: MARIADB_ROOT_PASSWORD
+        sync: false
